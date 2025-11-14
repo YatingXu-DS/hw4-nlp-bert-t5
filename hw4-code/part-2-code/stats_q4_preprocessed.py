@@ -15,19 +15,15 @@ def compute_lengths_and_vocab(tensor_list):
     return float(np.mean(lengths)), len(vocab)
 
 def extract_preprocessed_lists(split):
-    """
-    使用你的 T5Dataset(process_data) 得到经过真实预处理后的输入。
-    保证与训练时行为一致。
-    """
+
     dataset = T5Dataset(DATA_DIR, split)
     enc_inputs = []
     sql_inputs = []
 
     for ex in dataset.examples:
-        # encoder ids（加了特殊符号）
+
         enc_inputs.append(ex["encoder_ids"])
 
-        # decoder targets 可能是 None（test）
         if ex["decoder_targets"] is not None:
             sql_inputs.append(ex["decoder_targets"])
 
