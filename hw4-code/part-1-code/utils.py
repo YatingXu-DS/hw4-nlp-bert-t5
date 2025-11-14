@@ -1,5 +1,5 @@
 import datasets
-from datasets import load_dataset
+from datasets.load import load_dataset
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification
@@ -33,6 +33,29 @@ def example_transform(example):
 # something called synsets (which stands for synonymous words) and for each of them, lemmas() should give you a possible synonym word.
 # You can randomly select each word with some fixed probability to replace by a synonym.
 
+def get_synonym(word):
+
+    synsets = wordnet.synsets(word)
+    if not synsets:
+        return word
+    lemmas = synsets[0].lemmas()
+    if not lemmas:
+        return word
+    synonym = lemmas[0].name().replace("_", " ")
+    return synonym if synonym.lower() != word.lower() else word
+
+def introduce_typo(word):
+    if len(word) <= 3:
+        return word
+    if random.random() < 0.5:
+        i = random.randint(0, len(word) - 2)
+        return word[:i] + word[i+1] + word[i] + word[i+2:]
+    else:
+        letters = "abcdefghijklmnopqrstuvwxyz"
+        i = random.randint(1, len(word) - 2)
+        c = random.choice(letters)
+        return word[:i] + c + word[i:]
+
 
 def custom_transform(example):
     ################################
@@ -44,7 +67,26 @@ def custom_transform(example):
 
     # You should update example["text"] using your transformation
 
-    raise NotImplementedError
+    text = example["text"]
+    words = word_tokenize(text)
+    new_words = []
+
+    for w in words:
+        if w.isalpha():
+            r = random.random()
+            if r < 0.3:                      
+                new_words.append(get_synonym(w))
+            elif r < 0.45:                    
+                new_words.append(introduce_typo(w))
+            else:
+                new_words.append(w)
+        else:
+            new_words.append(w)
+
+
+    detok = TreebankWordDetokenizer()
+    transformed_text = detok.detokenize(new_words)
+    example["text"] = transformed_text
 
     ##### YOUR CODE ENDS HERE ######
 

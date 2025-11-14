@@ -11,6 +11,7 @@ from prompting_utils import read_schema, extract_sql_query, save_logs
 from load_data import load_prompting_data
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu') # you can add mps
+MAX_NEW_TOKENS = 128
 
 
 def get_args():
@@ -47,7 +48,10 @@ def create_prompt(sentence, k):
         * sentence (str): A text string
         * k (int): Number of examples in k-shot prompting
     '''
-    # TODO
+    # Simple zero-shot prompt: clearly ask the model to convert NL to SQL.
+    # Example format: "Convert this natural language question into SQL: <sentence>\nSQL:"
+    prompt = f"Convert this natural language question into SQL: {sentence}\nSQL:"
+    return prompt
 
 
 def exp_kshot(tokenizer, model, inputs, k):
@@ -80,13 +84,20 @@ def exp_kshot(tokenizer, model, inputs, k):
     return raw_outputs, extracted_queries
 
 
-def eval_outputs(eval_x, eval_y, gt_sql_pth, model_sql_path, gt_record_path, model_record_path):
+def eval_outputs(eval_x, eval_y, gt_path, model_path, gt_query_records=None, model_query_records=None):
     '''
     Evaluate the outputs of the model by computing the metrics.
 
-    Add/modify the arguments and code as needed.
+    This function assumes that the model-generated SQL queries have been saved
+    to `model_path` and that `model_query_records` points to the saved records
+    (both can be created via `save_queries_and_records`). It returns the same
+    metrics as `compute_metrics` plus an error rate.
     '''
-    # TODO
+    sql_em, record_em, record_f1, model_error_msgs = compute_metrics(gt_path, model_path, gt_query_records, model_query_records)
+    if len(model_error_msgs) > 0:
+        error_rate = sum(1 for e in model_error_msgs if e) / len(model_error_msgs)
+    else:
+        error_rate = 0.0
     return sql_em, record_em, record_f1, model_error_msgs, error_rate
 
 
@@ -148,16 +159,20 @@ def main():
     for eval_split in ["dev", "test"]:
         eval_x, eval_y = (dev_x, dev_y) if eval_split == "dev" else (test_x, None)
 
-        raw_outputs, extracted_queries = exp_kshot(tokenizer, model, eval_x, k)
+        raw_outputs, extracted_queries = exp_kshot(tokenizer, model, eval_x, shot)
 
         # You can add any post-processing if needed
-        # You can compute the records with `compute_records``
+        # You can compute the records with `compute_records`
 
         gt_query_records = f"records/{eval_split}_gt_records.pkl"
         gt_sql_path = os.path.join(f'data/{eval_split}.sql')
         gt_record_path = os.path.join(f'records/{eval_split}_gt_records.pkl')
         model_sql_path = os.path.join(f'results/gemma_{experiment_name}_dev.sql')
         model_record_path = os.path.join(f'records/gemma_{experiment_name}_dev.pkl')
+
+        # Save generated queries and records so eval_outputs can compute metrics
+        save_queries_and_records(extracted_queries, model_sql_path, model_record_path)
+
         sql_em, record_em, record_f1, model_error_msgs, error_rate = eval_outputs(
             eval_x, eval_y,
             gt_path=gt_sql_path,

@@ -1,5 +1,6 @@
 import datasets
-from datasets import load_dataset
+from datasets.load import load_dataset
+from datasets import concatenate_datasets
 from transformers import AutoTokenizer
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification
@@ -44,8 +45,33 @@ def do_train(args, model, train_dataloader, save_dir="./out"):
     # Remember that pytorch uses gradient accumumlation so you need to use zero_grad (https://pytorch.org/tutorials/recipes/recipes/zeroing_out_gradients.html)
     # You can use progress_bar.update(1) to see the progress during training
     # You can refer to the pytorch tutorial covered in class for reference
+    scaler = torch.cuda.amp.GradScaler()
 
-    raise NotImplementedError
+    model.to(device)
+    model.train()
+
+    for epoch in range(num_epochs):
+        print(f"Epoch {epoch + 1}/{num_epochs}")
+        for batch in train_dataloader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+            optimizer.zero_grad()
+
+            with torch.cuda.amp.autocast():
+                outputs = model(**batch)
+                loss = outputs.loss
+                
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            lr_scheduler.step()    
+
+            progress_bar.update(1)
+            progress_bar.set_description(f"loss: {loss.item():.4f}")
+
+        print(f"Epoch {epoch + 1} finished.")
+
+    progress_bar.close()
+
 
     ##### YOUR CODE ENDS HERE ######
 
@@ -86,19 +112,27 @@ def do_eval(eval_dataloader, output_dir, out_file):
 
 # Created a dataladoer for the augmented training dataset
 def create_augmented_dataloader(args, dataset):
-    ################################
-    ##### YOUR CODE BEGINGS HERE ###
 
-    # Here, 'dataset' is the original dataset. You should return a dataloader called 'train_dataloader' -- this
-    # dataloader will be for the original training split augmented with 5k random transformed examples from the training set.
-    # You may find it helpful to see how the dataloader was created at other place in this code.
+    train_subset = dataset["train"].shuffle(seed=42).select(range(5000))
 
-    raise NotImplementedError
+    transformed_train = train_subset.map(custom_transform, load_from_cache_file=False)
 
-    ##### YOUR CODE ENDS HERE ######
+    transformed_tok = transformed_train.map(tokenize_function, batched=True, load_from_cache_file=False)
+    if "text" in transformed_tok.column_names:
+        transformed_tok = transformed_tok.remove_columns(["text"])
+    transformed_tok = transformed_tok.rename_column("label", "labels")
+    transformed_tok.set_format("torch")
 
+    original_tok = dataset["train"].map(tokenize_function, batched=True)
+    if "text" in original_tok.column_names:
+        original_tok = original_tok.remove_columns(["text"])
+    original_tok = original_tok.rename_column("label", "labels")
+    original_tok.set_format("torch")
+
+    augmented_train = concatenate_datasets([original_tok, transformed_tok])
+
+    train_dataloader = DataLoader(augmented_train, shuffle=True, batch_size=args.batch_size)
     return train_dataloader
-
 
 # Create a dataloader for the transformed test set
 def create_transformed_dataloader(args, dataset, debug_transformation):
@@ -177,8 +211,19 @@ if __name__ == "__main__":
         print(f"len(train_dataloader): {len(train_dataloader)}")
         print(f"len(eval_dataloader): {len(eval_dataloader)}")
     else:
-        train_dataloader = DataLoader(tokenized_dataset["train"], shuffle=True, batch_size=args.batch_size)
-        eval_dataloader = DataLoader(tokenized_dataset["test"], batch_size=args.batch_size)
+        train_dataloader = DataLoader(
+            tokenized_dataset["train"],
+            shuffle=True,
+            batch_size=args.batch_size,
+            num_workers=4,        
+            pin_memory=True       
+        )
+        eval_dataloader = DataLoader(
+            tokenized_dataset["test"],
+            batch_size=args.batch_size,
+            num_workers=4,
+            pin_memory=True
+        )
         print(f"Actual training...")
         print(f"len(train_dataloader): {len(train_dataloader)}")
         print(f"len(eval_dataloader): {len(eval_dataloader)}")
